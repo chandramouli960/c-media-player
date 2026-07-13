@@ -218,8 +218,10 @@ class DetachedVideoWindow(QWidget):
         self.btn_pause = QPushButton("⏸")
         self.btn_skip = QPushButton("5 ⏩")
         self.btn_next = QPushButton("⏭")        # next video in the playlist
+        self.btn_close = QPushButton("✕")       # attach video back, no focus steal
         self.btn_prev.setToolTip("Previous video")
         self.btn_next.setToolTip("Next video")
+        self.btn_close.setToolTip("Close — attach video back to the main window")
         row.addStretch(1)
         for btn in (self.btn_prev, self.btn_rewind, self.btn_pause,
                     self.btn_skip, self.btn_next):
@@ -227,6 +229,9 @@ class DetachedVideoWindow(QWidget):
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             row.addWidget(btn)
         row.addStretch(1)
+        self.btn_close.setMinimumWidth(40)
+        self.btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        row.addWidget(self.btn_close)
         return bar
 
     def set_fullscreen(self, on):
@@ -845,6 +850,9 @@ class ReelPlayer(QMainWindow):
         self.detached_window.btn_pause.clicked.connect(self.toggle_pause)
         self.detached_window.btn_skip.clicked.connect(lambda: self.seek_relative(5))
         self.detached_window.btn_next.clicked.connect(self.play_next)
+        # Close = re-attach the video to the main window without raising/focusing
+        # it, so the user stays on their current workspace.
+        self.detached_window.btn_close.clicked.connect(self._attach)
 
         # Persist the playlist + resume position periodically (and on close), so
         # a crash can't lose more than a few seconds of progress.
