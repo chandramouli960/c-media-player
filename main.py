@@ -803,6 +803,8 @@ class ReelPlayer(QMainWindow):
     _mpv_aspect = pyqtSignal(float)
     _mpv_drag = pyqtSignal(bool)   # True on button-down (start), False on up (end)
     _mpv_pause = pyqtSignal(bool)  # reflects the player's pause state to the buttons
+    _mpv_click = pyqtSignal()      # single left-click on the docked video body
+    _mpv_dblclick = pyqtSignal()   # double left-click on the docked video body
 
     def __init__(self):
         super().__init__()
@@ -842,6 +844,17 @@ class ReelPlayer(QMainWindow):
         self._mpv_aspect.connect(self._on_mpv_aspect)
         self._mpv_drag.connect(self._on_mpv_drag)
         self._mpv_pause.connect(self._on_mpv_pause)
+        self._mpv_click.connect(self._on_video_click)
+        self._mpv_dblclick.connect(self._on_video_dblclick)
+
+        # Click-to-pause is debounced so a double-click (fullscreen toggle)
+        # doesn't also flip pause. The delay must exceed mpv's double-click
+        # window (input-doubleclick-time, set to 220 ms below) so a pending
+        # single-click can be cancelled when the second click arrives.
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.setInterval(240)
+        self._click_timer.timeout.connect(self.toggle_pause)
 
         # The detached window's transport buttons drive the same actions as the
         # docked ones.
@@ -1045,6 +1058,7 @@ class ReelPlayer(QMainWindow):
             hwdec="no",
             input_default_bindings=True,
             input_vo_keyboard=False,
+            input_doubleclick_time=220,
             osc=False,
             keep_open="yes",
         )
@@ -1111,6 +1125,20 @@ class ReelPlayer(QMainWindow):
                     self._mpv_drag.emit(True)
                 elif state and state[0] == "u":
                     self._mpv_drag.emit(False)
+        else:
+            # Docked video: single left-click on the body toggles pause,
+            # double-click toggles fullscreen. mpv owns the embedded window, so
+            # Qt never sees these clicks — bind them on mpv (default mode, so
+            # uosc's forced seek-bar bindings still win over the timeline).
+            @self.player.key_binding("MBTN_LEFT", mode="default")
+            def _click(state, *_):
+                if state and state[0] == "d":
+                    self._mpv_click.emit()
+
+            @self.player.key_binding("MBTN_LEFT_DBL", mode="default")
+            def _dblclick(state, *_):
+                if state and state[0] == "d":
+                    self._mpv_dblclick.emit()
 
     def _build_player(self):
         self._create_mpv_core(self.surface)
@@ -1440,7 +1468,12 @@ class ReelPlayer(QMainWindow):
         self.right_panel.setVisible(not on)
         self.controls_widget.setVisible(not on)
         if on:
+            # Remember whether we were maximised so exiting fullscreen returns
+            # to the same size instead of shrinking to the "normal" geometry.
+            self._was_maximized = self.isMaximized()
             self.showFullScreen()
+        elif getattr(self, "_was_maximized", False):
+            self.showMaximized()
         else:
             self.showNormal()
 
@@ -1482,6 +1515,14 @@ class ReelPlayer(QMainWindow):
         icon = "▶" if paused else "⏸"
         self.btn_pause.setText(icon)
         self.detached_window.btn_pause.setText(icon)
+
+    def _on_video_click(self):
+        # Defer the pause toggle; a double-click cancels it (see _click_timer).
+        self._click_timer.start()
+
+    def _on_video_dblclick(self):
+        self._click_timer.stop()   # swallow the pending single-click pause
+        self.toggle_fullscreen()
 
     def _on_mpv_aspect(self, aspect):
         if self.detached and not self.detached_window.isMaximized():
