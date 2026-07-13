@@ -1,0 +1,21 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <radialGradient id="bg" cx="35%" cy="30%" r="80%">
+      <stop offset="0%" stop-color="#1e212b"/>
+      <stop offset="100%" stop-color="#0e1015"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e7bb56"/>
+      <stop offset="100%" stop-color="#c8931f"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="128" cy="128" r="124" fill="url(#bg)" stroke="#2a2e3a" stroke-width="4"/>
+
+  <!-- C ring, open on the right where the play triangle sits -->
+  <path d="M198.4,177.3 A86,86 0 1 1 198.4,78.7"
+        fill="none" stroke="url(#gold)" stroke-width="20" stroke-linecap="round"/>
+
+  <!-- play triangle nested in the gap -->
+  <polygon points="138,96 138,160 194,128" fill="url(#gold)"/>
+</svg>
