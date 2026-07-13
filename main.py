@@ -196,7 +196,7 @@ class DetachedVideoWindow(QWidget):
         self.video_holder.setCursor(Qt.CursorShape.ArrowCursor)
         self._layout.addWidget(self.video_holder, 1)
 
-        # Always-visible transport bar (rewind / play-pause / skip / fullscreen).
+        # Always-visible transport bar (prev / rewind / play-pause / skip / next).
         # It has a fixed height and stays laid out below the video, so the
         # buttons remain hittable no matter how small the window gets — unlike
         # mpv's OSC, which shrinks with the video. ReelPlayer wires the buttons.
@@ -213,19 +213,20 @@ class DetachedVideoWindow(QWidget):
         row = QHBoxLayout(bar)
         row.setContentsMargins(10, 5, 10, 5)
         row.setSpacing(8)
+        self.btn_prev = QPushButton("⏮")       # previous video in the playlist
         self.btn_rewind = QPushButton("⏪ 5")
         self.btn_pause = QPushButton("⏸")
         self.btn_skip = QPushButton("5 ⏩")
-        self.btn_fullscreen = QPushButton("⛶")
-        self.btn_dock = QPushButton("⧉ Dock")   # re-attach to the main window
+        self.btn_next = QPushButton("⏭")        # next video in the playlist
+        self.btn_prev.setToolTip("Previous video")
+        self.btn_next.setToolTip("Next video")
         row.addStretch(1)
-        for btn in (self.btn_rewind, self.btn_pause, self.btn_skip, self.btn_fullscreen):
+        for btn in (self.btn_prev, self.btn_rewind, self.btn_pause,
+                    self.btn_skip, self.btn_next):
             btn.setMinimumWidth(52)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             row.addWidget(btn)
         row.addStretch(1)
-        self.btn_dock.setCursor(Qt.CursorShape.PointingHandCursor)
-        row.addWidget(self.btn_dock)
         return bar
 
     def set_fullscreen(self, on):
@@ -839,11 +840,11 @@ class ReelPlayer(QMainWindow):
 
         # The detached window's transport buttons drive the same actions as the
         # docked ones.
+        self.detached_window.btn_prev.clicked.connect(self.play_previous)
         self.detached_window.btn_rewind.clicked.connect(lambda: self.seek_relative(-5))
         self.detached_window.btn_pause.clicked.connect(self.toggle_pause)
         self.detached_window.btn_skip.clicked.connect(lambda: self.seek_relative(5))
-        self.detached_window.btn_fullscreen.clicked.connect(self.toggle_fullscreen)
-        self.detached_window.btn_dock.clicked.connect(self._attach)
+        self.detached_window.btn_next.clicked.connect(self.play_next)
 
         # Persist the playlist + resume position periodically (and on close), so
         # a crash can't lose more than a few seconds of progress.
