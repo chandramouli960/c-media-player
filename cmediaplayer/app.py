@@ -105,6 +105,14 @@ class ReelPlayer(QMainWindow):
         self._state_timer.timeout.connect(self._save_state)
         self._state_timer.start()
 
+        # Per-video resume positions {path: seconds} and, per saved playlist
+        # folder, which episode was playing last {folder: path} — so reopening a
+        # playlist picks up where you left off instead of restarting at video 1.
+        self.progress = {}
+        self.last_in_folder = {}
+        self.current_playlist_path = None
+        self._load_progress()
+
         # Saved playlists (folders) for the home page, scanned off-thread.
         self.playlists = self._load_playlists()
         self._pool = QThreadPool.globalInstance()
@@ -295,6 +303,11 @@ class ReelPlayer(QMainWindow):
         self.core.seek(pos)
 
     def _on_eof(self):
+        # A finished video should replay from the start next time, not resume at
+        # the very end — so drop its saved position.
+        finished = self.playlist.current_path
+        if finished:
+            self.progress.pop(finished, None)
         # Advance shortly after end-of-file so mpv has settled the transition.
         QTimer.singleShot(50, self.play_next)
 
@@ -316,7 +329,7 @@ class ReelPlayer(QMainWindow):
         self.clear_playlist()
         self.add_files([folder])
 
-    def add_files(self, paths):
+    def add_files(self, paths, autoplay=True):
         was_empty = self.playlist.is_empty
         for p in paths:
             if os.path.isdir(p):
@@ -326,7 +339,7 @@ class ReelPlayer(QMainWindow):
                             self._append_item(os.path.join(root, entry))
             elif os.path.splitext(p)[1].lower() in VIDEO_EXTS:
                 self._append_item(p)
-        if was_empty and not self.playlist.is_empty:
+        if was_empty and not self.playlist.is_empty and autoplay:
             self.play_index(0)
         self._save_state()
 
@@ -350,9 +363,30 @@ class ReelPlayer(QMainWindow):
         self.player.command("stop")
         self.playlist_widget.clear()
         self.playlist.clear()
+        self.current_playlist_path = None
         self._save_state()
 
     # ---------- session persistence ----------
+    def _load_progress(self):
+        """Load per-video resume positions and per-folder last-episode memory
+        from the saved state (best-effort; drops anything malformed or gone)."""
+        try:
+            with open(STATE_FILE) as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            return
+        prog = data.get("progress")
+        if isinstance(prog, dict):
+            self.progress = {
+                k: float(v) for k, v in prog.items()
+                if isinstance(v, (int, float)) and os.path.exists(k)
+            }
+        last = data.get("last_in_folder")
+        if isinstance(last, dict):
+            self.last_in_folder = {
+                k: v for k, v in last.items() if isinstance(v, str)
+            }
+
     def _save_state(self):
         """Persist the playlist, which video is current, and its position so the
         next launch resumes exactly where the user left off. Written atomically
@@ -369,11 +403,24 @@ class ReelPlayer(QMainWindow):
                 vol = float(self.player.volume)
             except Exception:  # noqa: BLE001
                 vol = 80.0
+            pos = float(pos or 0)
+            if cur:
+                # Remember where we are in this video — but ignore the last
+                # couple of seconds, which is effectively "finished".
+                if pos > 5:
+                    self.progress[cur] = pos
+                # If this video belongs to the open playlist folder, remember it
+                # as that playlist's resume point.
+                if (self.current_playlist_path
+                        and cur.startswith(self.current_playlist_path + os.sep)):
+                    self.last_in_folder[self.current_playlist_path] = cur
             data = {
                 "playlist": list(self.playlist.paths),
                 "current_path": cur,
-                "position": float(pos or 0),
+                "position": pos,
                 "volume": vol,
+                "progress": self.progress,
+                "last_in_folder": self.last_in_folder,
             }
             os.makedirs(CONFIG_DIR, exist_ok=True)
             tmp = STATE_FILE + ".tmp"
@@ -526,10 +573,19 @@ class ReelPlayer(QMainWindow):
         self.home_page.set_playlists(self.playlists)
 
     def open_playlist(self, path):
-        # Load the folder's videos into the queue and switch to the player.
+        # Load the folder's videos into the queue and switch to the player,
+        # resuming the episode we last watched from this playlist (falling back
+        # to the first video). clear_playlist() resets current_playlist_path, so
+        # set it afterwards.
         self._show_player()
         self.clear_playlist()
-        self.add_files([path])
+        self.add_files([path], autoplay=False)
+        self.current_playlist_path = path
+        if self.playlist.is_empty:
+            return
+        last = self.last_in_folder.get(path)
+        idx = self.playlist.paths.index(last) if last in self.playlist.paths else 0
+        self.play_index(idx)
 
     def show_home(self):
         if self.detached:
@@ -559,6 +615,11 @@ class ReelPlayer(QMainWindow):
         self.player.play(path)
         self.player.pause = False
         self.core.last_time_pos = 0
+        # Resume this video where we left off, if we have a saved position.
+        resume = self.progress.get(path, 0)
+        if resume and resume > 5:
+            self.core.last_time_pos = resume
+            QTimer.singleShot(500, lambda p=resume: self._safe_seek(p))
         self.playlist_widget.setCurrentRow(index)
         self.setWindowTitle(f"{APP_NAME} — {os.path.basename(path)}")
         self._save_state()
